@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css">
+  <style>
+    body { background: #1e1e1e; margin: 0; padding: 20px; }
+    #terminal { width: 100%; height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="terminal"></div>
+  <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+  <script type="module">
+    import { WASI, Fd } from "https://cdn.jsdelivr.net/npm/@bjorn3/browser_wasi_shim@0.3.0/dist/index.js";
+
+    const term = new Terminal();
+    term.open(document.getElementById("terminal"));
+
+    let lastTerminalOutput = "";
+
+    class TerminalOutput extends Fd {
+      constructor(term, isError = false) {
+        super();
+        this.term = term;
+        this.isError = isError;
+        this.decoder = new TextDecoder("utf-8");
+      }
+
+      fd_write(data) {
+        let text = this.decoder.decode(data);
+
+        lastTerminalOutput = text.trim(); 
+
+        text = text.replace(/\n/g, "\r\n");
+        if (this.isError) {
+          this.term.write(`\x1b[31m${text}\x1b[0m`);
+        } else {
+          this.term.write(text);
+        }
+        return { ret: 0, nwritten: data.byteLength };
+      }
+    }
+
+    class SyncPromptStdin extends Fd {
+      constructor(term) {
+        super();
+        this.buffer = new Uint8Array(0);
+        this.term = term;
+      }
+
+      fd_read(max_length) {
+        if (this.buffer.byteLength === 0) {
+          const message = lastTerminalOutput 
+            ? `${lastTerminalOutput}`
+            : `入力を待機しています:`;
+
+          const input = window.prompt(message);
+
+          if (input === null) return { ret: 0, data: new Uint8Array(0) }; 
+          this.term.write(input + "\r\n");
+          this.buffer = new TextEncoder().encode(input + "\n");
+        }
+
+        const bytesToReturn = Math.min(max_length, this.buffer.byteLength);
+        const data = this.buffer.subarray(0, bytesToReturn);
+        this.buffer = this.buffer.subarray(bytesToReturn);
+        return { ret: 0, data };
+      }
+    }
+
+    const fds = [
+      new SyncPromptStdin(term),
+      new TerminalOutput(term, false),
+      new TerminalOutput(term, true),
+    ];
+
+    const wasi = new WASI([], [], fds);
+
+    const response = await fetch("lambda-calc.wasm");
+    const bytes = await response.arrayBuffer();
+
+    const importObject = {
+      "wasi_snapshot_preview1": wasi.wasiImport
+    };
+
+    const { instance } = await WebAssembly.instantiate(bytes, importObject);
+
+    wasi.start(instance);
+  </script>
+</body>
+</html>

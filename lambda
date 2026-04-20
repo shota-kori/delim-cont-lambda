@@ -1,0 +1,12 @@
+let bool = \b. if b then 1 else 0 in
+let int = \i. i in
+
+let c = \f. \g. \x. g (f x) in
+let lit = + in
+
+let param = \toi.\i. shift k. \x. k (+ i (toi x)) in
+let format = \f. reset (f 0) in
+
+format (
+    c (c (c (lit 1) (param int)) (lit 3)) (param bool)
+) 2 True
